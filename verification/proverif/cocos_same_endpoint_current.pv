@@ -1,0 +1,70 @@
+(* Minimal ProVerif model for same-endpoint authenticity in the current
+   post-handshake Cocos AI aTLS design.
+
+   Goal:
+   - Separate "the client accepted something backed by genuine attestation"
+     from "the client is on the same live channel as the genuine service".
+
+   Scope:
+   - The service attests an ephemeral public key together with a request
+     context.
+   - The client accepts only after seeing that attestation and verifying a
+     live challenge with the attested key.
+   - A relay attacker may learn the corresponding private key after
+     attestation issuance. This is an explicit leakage assumption.
+*)
+
+type skey.
+type pkey.
+
+free net: channel.
+free service: bitstring.
+free skA: skey [private].
+
+fun pk(skey): pkey.
+fun ea_request(bitstring, bitstring): bitstring [data].
+fun attest_payload(bitstring, pkey, bitstring): bitstring [data].
+fun authenticator(bitstring): bitstring [data].
+fun challenge_payload(bitstring, bitstring): bitstring [data].
+fun sign(bitstring, skey): bitstring.
+reduc forall m: bitstring, k: skey; checksign(sign(m, k), pk(k)) = m.
+
+event ServerIssuesAttestation(bitstring, pkey, bitstring).
+event ServerControlsLiveEndpoint(bitstring, bitstring, pkey).
+event ClientAccepts(bitstring, bitstring, pkey).
+
+let GenuineService =
+  new skE: skey;
+  in(net, ea_request(chan_id_from_client: bitstring, req_ctx: bitstring));
+  let pkE = pk(skE) in
+  event ServerIssuesAttestation(service, pkE, req_ctx);
+  out(net, authenticator(sign(attest_payload(service, pkE, req_ctx), skA)));
+  (* Explicit leakage assumption used to study same-endpoint failure. *)
+  out(net, skE);
+  in(net, challenge_payload(=chan_id_from_client, challenge: bitstring));
+  event ServerControlsLiveEndpoint(service, chan_id_from_client, pkE);
+  out(net, sign(challenge_payload(chan_id_from_client, challenge), skE)).
+
+let Client =
+  new chan_id: bitstring;
+  new req_ctx: bitstring;
+  new challenge: bitstring;
+  out(net, ea_request(chan_id, req_ctx));
+  in(net, auth: bitstring);
+  let authenticator(att: bitstring) = auth in
+  let attest_payload(=service, pkE: pkey, =req_ctx) = checksign(att, pk(skA)) in
+  out(net, challenge_payload(chan_id, challenge));
+  in(net, resp: bitstring);
+  if checksign(resp, pkE) = challenge_payload(chan_id, challenge) then
+    event ClientAccepts(service, chan_id, pkE).
+
+query chan_q: bitstring, pkE_q: pkey, ctx_q: bitstring;
+  event(ClientAccepts(service, chan_q, pkE_q))
+  ==> event(ServerIssuesAttestation(service, pkE_q, ctx_q)).
+
+query chan_q: bitstring, pkE_q: pkey;
+  event(ClientAccepts(service, chan_q, pkE_q))
+  ==> event(ServerControlsLiveEndpoint(service, chan_q, pkE_q)).
+
+process
+  (!GenuineService) | (!Client)
