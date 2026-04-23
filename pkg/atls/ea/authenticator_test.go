@@ -199,6 +199,43 @@ func TestAttestationFailsClosedWithoutVerifier(t *testing.T) {
 	}
 }
 
+func TestValidateAuthenticatorRejectsMissingOfferedAttestation(t *testing.T) {
+	cert := selfSignedCert(t)
+	srv, cli := tlsPair(t, cert)
+	defer srv.Close()
+	defer cli.Close()
+
+	ctx, _ := NewRandomContext(16)
+	req := &AuthenticatorRequest{
+		Type:    HandshakeTypeClientCertificateRequest,
+		Context: ctx,
+		Extensions: []Extension{
+			{Type: SignatureAlgorithmsExtensionType, Data: []byte{0x00, 0x02, 0x04, 0x03}},
+			CMWAttestationOfferExtension(),
+		},
+	}
+
+	srvState := srv.ConnectionState()
+	auth, err := CreateAuthenticator(&srvState, RoleServer, req, cert, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cliState := cli.ConnectionState()
+	roots := x509.NewCertPool()
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots.AddCert(leaf)
+
+	if _, err := ValidateAuthenticatorWithAttestation(&cliState, RoleServer, req, auth, &x509.VerifyOptions{Roots: roots}, attestation.VerificationPolicy{
+		EvidenceVerifier: acceptEvidenceVerifier{},
+	}); err != ErrAttestationRequired {
+		t.Fatalf("got %v, want %v", err, ErrAttestationRequired)
+	}
+}
+
 func TestRejectCMWAttestationOnIntermediateEntry(t *testing.T) {
 	cert := selfSignedCert(t)
 	srv, cli := tlsPair(t, cert)

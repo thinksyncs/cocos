@@ -27,6 +27,7 @@ var (
 	ErrFinishedMismatch           = errors.New("ea: Finished MAC mismatch")
 	ErrContextMismatch            = errors.New("ea: certificate_request_context mismatch")
 	ErrBadRequest                 = errors.New("ea: bad authenticator request")
+	ErrAttestationRequired        = errors.New("ea: attestation offered but missing from authenticator")
 )
 
 type ValidationResult struct {
@@ -291,6 +292,9 @@ func validateAuthenticator(session *Session, st *tls.ConnectionState, role Role,
 	}
 	if present && req == nil && !PolicyPermitsCertificateExtension(policy, CMWAttestationExtensionType) {
 		return nil, ErrBadRequest
+	}
+	if !present && req != nil && RequestPermitsCertificateExtension(req, CMWAttestationExtensionType) {
+		return nil, ErrAttestationRequired
 	}
 
 	chain := make([]*x509.Certificate, 0, len(certMsg.Entries))
