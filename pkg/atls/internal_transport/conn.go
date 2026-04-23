@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/ultravioletrs/cocos/pkg/atls/ea"
@@ -28,6 +29,7 @@ type ClientConfig struct {
 	AttestationPolicy eaattestation.VerificationPolicy
 	Request           *ea.AuthenticatorRequest
 	RequestBuilder    func() (*ea.AuthenticatorRequest, error)
+	sessionMu         sync.Mutex
 }
 
 type ServerConfig struct {
@@ -35,6 +37,7 @@ type ServerConfig struct {
 	Session             *ea.Session
 	Identity            tls.Certificate
 	BuildLeafExtensions func(*tls.ConnectionState, *ea.AuthenticatorRequest, *x509.Certificate) ([]ea.Extension, error)
+	sessionMu           sync.Mutex
 }
 
 func Dial(network, address string, cfg *ClientConfig) (*Conn, error) {
@@ -125,12 +128,8 @@ func ClientContext(ctx context.Context, tlsConn *tls.Conn, cfg *ClientConfig) (*
 		}
 
 		st := tlsConn.ConnectionState()
-		var validation *ea.ValidationResult
-		if cfg.Session != nil {
-			validation, err = cfg.Session.ValidateAuthenticatorWithAttestation(&st, ea.RoleServer, req, authBytes, cfg.VerifyOptions, cfg.AttestationPolicy)
-		} else {
-			validation, err = ea.ValidateAuthenticatorWithAttestation(&st, ea.RoleServer, req, authBytes, cfg.VerifyOptions, cfg.AttestationPolicy)
-		}
+		session := cfg.ensureSession()
+		validation, err := session.ValidateAuthenticatorWithAttestation(&st, ea.RoleServer, req, authBytes, cfg.VerifyOptions, cfg.AttestationPolicy)
 		if err != nil {
 			return err
 		}
@@ -179,12 +178,8 @@ func Server(tlsConn *tls.Conn, cfg *ServerConfig) (*Conn, error) {
 		return nil, err
 	}
 
-	var authBytes []byte
-	if cfg.Session != nil {
-		authBytes, err = cfg.Session.CreateAuthenticator(&st, ea.RoleServer, &req, identity, exts)
-	} else {
-		authBytes, err = ea.CreateAuthenticator(&st, ea.RoleServer, &req, identity, exts)
-	}
+	session := cfg.ensureSession()
+	authBytes, err := session.CreateAuthenticator(&st, ea.RoleServer, &req, identity, exts)
 	if err != nil {
 		return nil, err
 	}
@@ -194,6 +189,24 @@ func Server(tlsConn *tls.Conn, cfg *ServerConfig) (*Conn, error) {
 	}
 
 	return &Conn{Conn: tlsConn, Request: &req}, nil
+}
+
+func (cfg *ClientConfig) ensureSession() *ea.Session {
+	cfg.sessionMu.Lock()
+	defer cfg.sessionMu.Unlock()
+	if cfg.Session == nil {
+		cfg.Session = ea.NewSession()
+	}
+	return cfg.Session
+}
+
+func (cfg *ServerConfig) ensureSession() *ea.Session {
+	cfg.sessionMu.Lock()
+	defer cfg.sessionMu.Unlock()
+	if cfg.Session == nil {
+		cfg.Session = ea.NewSession()
+	}
+	return cfg.Session
 }
 
 func buildRequest(cfg *ClientConfig) (*ea.AuthenticatorRequest, error) {
