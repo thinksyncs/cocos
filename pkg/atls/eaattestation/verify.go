@@ -26,10 +26,13 @@ func VerifyPayload(st *tls.ConnectionState, defaultLabel string, certificateRequ
 	if err := payload.Validate(); err != nil {
 		return nil, err
 	}
+	if payload.Binder.ExporterLabel != "" && payload.Binder.ExporterLabel != defaultLabel {
+		return nil, ErrNonCanonicalExporterLabel
+	}
 
 	verified := &VerifiedPayload{
 		Payload:           payload,
-		UsedExporterLabel: payload.NormalizedExporterLabel(defaultLabel),
+		UsedExporterLabel: defaultLabel,
 	}
 
 	if len(payload.Evidence) > 0 && policy.EvidenceVerifier != nil {

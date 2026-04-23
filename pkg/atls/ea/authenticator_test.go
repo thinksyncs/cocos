@@ -127,6 +127,62 @@ func TestDummyAttestationRoundTrip(t *testing.T) {
 	}
 }
 
+func TestDummyAttestationRoundTripRejectsAlternateExporterLabel(t *testing.T) {
+	cert := selfSignedCert(t)
+	srv, cli := tlsPair(t, cert)
+	defer srv.Close()
+	defer cli.Close()
+
+	ctx, _ := NewRandomContext(16)
+	req := &AuthenticatorRequest{
+		Type:    HandshakeTypeClientCertificateRequest,
+		Context: ctx,
+		Extensions: []Extension{
+			{Type: SignatureAlgorithmsExtensionType, Data: []byte{0x00, 0x02, 0x04, 0x03}},
+			CMWAttestationOfferExtension(),
+		},
+	}
+
+	leaf, _ := x509.ParseCertificate(cert.Certificate[0])
+	srvState := srv.ConnectionState()
+	_, aikPubHash, binding, err := attestation.ComputeBinding(&srvState, attestation.ExporterLabelAttestationBinding, ctx, leaf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payloadBytes, err := attestation.MarshalPayload(attestation.Payload{
+		Version:   1,
+		Evidence:  []byte("dummy-attestation-report"),
+		MediaType: "application/eat+cwt",
+		Binder: attestation.AttestationBinder{
+			ExporterLabel: attestation.ExporterLabelAttestationBinding,
+			AIKPubHash:    aikPubHash,
+			Binding:       binding,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ext, err := CMWAttestationDataExtension(payloadBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	auth, err := CreateAuthenticator(&srvState, RoleServer, req, cert, []Extension{ext})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cliState := cli.ConnectionState()
+	roots := x509.NewCertPool()
+	roots.AddCert(leaf)
+
+	if _, err := ValidateAuthenticatorWithAttestation(&cliState, RoleServer, req, auth, &x509.VerifyOptions{Roots: roots}, attestation.VerificationPolicy{
+		EvidenceVerifier: acceptEvidenceVerifier{},
+	}); err != attestation.ErrNonCanonicalExporterLabel {
+		t.Fatalf("got %v, want %v", err, attestation.ErrNonCanonicalExporterLabel)
+	}
+}
+
 func TestRejectIfNotOffered(t *testing.T) {
 	cert := selfSignedCert(t)
 	srv, cli := tlsPair(t, cert)

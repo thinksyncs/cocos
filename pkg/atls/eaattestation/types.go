@@ -12,6 +12,7 @@ var (
 	ErrMalformedPayload            = errors.New("attestation: malformed payload")
 	ErrMissingStatement            = errors.New("attestation: missing evidence or attestation results")
 	ErrMissingBinder               = errors.New("attestation: missing attestation binder")
+	ErrNonCanonicalExporterLabel   = errors.New("attestation: non-canonical exporter label")
 	ErrAIKPubHashMismatch          = errors.New("attestation: AIK public key hash mismatch")
 	ErrBindingMismatch             = errors.New("attestation: attestation binding mismatch")
 	ErrEvidenceVerificationMissing = errors.New("attestation: evidence verifier not configured")
