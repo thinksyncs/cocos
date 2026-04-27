@@ -12,7 +12,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/ultravioletrs/cocos/pkg/attestation"
+	"github.com/veraison/corim/comid"
 	"github.com/veraison/corim/corim"
+	"github.com/veraison/swid"
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
@@ -633,14 +635,16 @@ func TestVerifier_VerifyWithCoRIM(t *testing.T) {
 	// 2. No tags in CoRIM
 	report := make([]byte, 160)
 	err = v.VerifyWithCoRIM(report, &corim.UnsignedCorim{})
-	assert.NoError(t, err)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no matching reference value found in CoRIM for TDX")
 
 	// 3. With non-comid tag
 	manifest := &corim.UnsignedCorim{
 		Tags: []corim.Tag{corim.Tag("not-a-comid")},
 	}
 	err = v.VerifyWithCoRIM(report, manifest)
-	assert.NoError(t, err)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no matching reference value found in CoRIM for TDX")
 
 	// 4. With invalid comid tag
 	manifest = &corim.UnsignedCorim{
@@ -649,6 +653,30 @@ func TestVerifier_VerifyWithCoRIM(t *testing.T) {
 	err = v.VerifyWithCoRIM(report, manifest)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse CoMID from tag")
+
+	// 5. Successful MRTD match
+	mrtd := make([]byte, 48)
+	for i := range mrtd {
+		mrtd[i] = byte(i + 1)
+	}
+	copy(report[112:160], mrtd)
+
+	c := comid.NewComid().
+		SetTagIdentity("tdx-test-tag", 0).
+		AddReferenceValue(comid.ReferenceValue{
+			Environment: comid.Environment{
+				Class:    comid.NewClassOID(comid.TestOID),
+				Instance: comid.MustNewUEIDInstance(comid.TestUEID),
+			},
+			Measurements: *comid.NewMeasurements().
+				AddMeasurement(comid.MustNewUUIDMeasurement(comid.TestUUID).AddDigest(swid.Sha3_384, mrtd)),
+		})
+
+	unsignedCorim := corim.NewUnsignedCorim()
+	unsignedCorim.AddComid(*c)
+
+	err = v.VerifyWithCoRIM(report, unsignedCorim)
+	assert.NoError(t, err)
 }
 
 func TestVerifier_VerifyEAT(t *testing.T) {

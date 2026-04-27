@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/veraison/corim/comid"
 	"github.com/veraison/corim/corim"
+	"github.com/veraison/swid"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -252,7 +253,7 @@ func TestVerifier_VerifyWithCoRIM(t *testing.T) {
 	assert.Contains(t, err.Error(), "no measurement in SEV-SNP report")
 
 	// 4. Successful match
-	measurement := []byte("test-measurement-1234")
+	measurement := make([]byte, 32)
 	att = &attest.Attestation{
 		TeeAttestation: &attest.Attestation_SevSnpAttestation{
 			SevSnpAttestation: &sevsnp.Attestation{
@@ -265,12 +266,16 @@ func TestVerifier_VerifyWithCoRIM(t *testing.T) {
 	reportBytes, _ = proto.Marshal(att)
 
 	// Create a mock CoMID with the same measurement
-	c := comid.NewComid()
-	m := comid.MustNewUintMeasurement(uint64(1))
-	m.AddDigest(1, measurement)
-	c.AddReferenceValue(comid.ReferenceValue{
-		Measurements: comid.Measurements{*m},
-	})
+	c := comid.NewComid().
+		SetTagIdentity("vtpm-test-tag", 0).
+		AddReferenceValue(comid.ReferenceValue{
+			Environment: comid.Environment{
+				Class:    comid.NewClassOID(comid.TestOID),
+				Instance: comid.MustNewUEIDInstance(comid.TestUEID),
+			},
+			Measurements: *comid.NewMeasurements().
+				AddMeasurement(comid.MustNewUUIDMeasurement(comid.TestUUID).AddDigest(swid.Sha3_256, measurement)),
+		})
 
 	unsignedCorim := corim.NewUnsignedCorim()
 	unsignedCorim.AddComid(*c)
@@ -281,12 +286,14 @@ func TestVerifier_VerifyWithCoRIM(t *testing.T) {
 	// 5. CoRIM with no tags
 	unsignedCorim.Tags = nil
 	err = v.VerifyWithCoRIM(reportBytes, unsignedCorim)
-	assert.NoError(t, err) // Matches current implementation behavior
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no matching reference value found in CoRIM for vTPM")
 
 	// 6. Non-CoMID tag
 	unsignedCorim.Tags = []corim.Tag{corim.Tag([]byte("non-comid-tag"))}
 	err = v.VerifyWithCoRIM(reportBytes, unsignedCorim)
-	assert.NoError(t, err)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no matching reference value found in CoRIM for vTPM")
 
 	// 7. Invalid CoMID tag
 	unsignedCorim.Tags = []corim.Tag{corim.Tag(append(corim.ComidTag, []byte("invalid")...))}
