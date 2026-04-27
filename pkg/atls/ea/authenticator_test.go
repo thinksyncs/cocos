@@ -186,6 +186,67 @@ func TestDummyAttestationRoundTripRejectsAlternateExporterLabel(t *testing.T) {
 	}
 }
 
+func TestValidateAuthenticatorRejectsLeafKeySubstitution(t *testing.T) {
+	bindingCert := selfSignedCert(t)
+	authenticatorCert := selfSignedCert(t)
+
+	srv, cli := tlsPair(t, authenticatorCert)
+	defer srv.Close()
+	defer cli.Close()
+
+	ctx, _ := NewRandomContext(16)
+	req := &AuthenticatorRequest{
+		Type:    HandshakeTypeClientCertificateRequest,
+		Context: ctx,
+		Extensions: []Extension{
+			{Type: SignatureAlgorithmsExtensionType, Data: []byte{0x00, 0x02, 0x04, 0x03}},
+			CMWAttestationOfferExtension(),
+		},
+	}
+
+	bindingLeaf, _ := x509.ParseCertificate(bindingCert.Certificate[0])
+	authenticatorLeaf, _ := x509.ParseCertificate(authenticatorCert.Certificate[0])
+
+	srvState := srv.ConnectionState()
+	_, aikPubHash, binding, err := attestation.ComputeBinding(&srvState, attestation.ExporterLabelAttestation, ctx, bindingLeaf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payloadBytes, err := attestation.MarshalPayload(attestation.Payload{
+		Version:   1,
+		Evidence:  []byte("dummy-attestation-report"),
+		MediaType: "application/eat+cwt",
+		Binder: attestation.AttestationBinder{
+			ExporterLabel: attestation.ExporterLabelAttestation,
+			AIKPubHash:    aikPubHash,
+			Binding:       binding,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ext, err := CMWAttestationDataExtension(payloadBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	auth, err := CreateAuthenticator(&srvState, RoleServer, req, authenticatorCert, []Extension{ext})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cliState := cli.ConnectionState()
+	roots := x509.NewCertPool()
+	roots.AddCert(authenticatorLeaf)
+
+	_, err = ValidateAuthenticatorWithAttestation(&cliState, RoleServer, req, auth, &x509.VerifyOptions{Roots: roots}, attestation.VerificationPolicy{
+		EvidenceVerifier: acceptEvidenceVerifier{},
+	})
+	if err != attestation.ErrAIKPubHashMismatch && err != attestation.ErrBindingMismatch {
+		t.Fatalf("got %v, want %v or %v", err, attestation.ErrAIKPubHashMismatch, attestation.ErrBindingMismatch)
+	}
+}
+
 func TestRejectIfNotOffered(t *testing.T) {
 	cert := selfSignedCert(t)
 	srv, cli := tlsPair(t, cert)
@@ -420,6 +481,40 @@ func TestSessionRejectsContextReuse(t *testing.T) {
 	}
 	if _, err := validateSession.ValidateAuthenticator(&cliState, RoleServer, req, auth, &x509.VerifyOptions{Roots: roots}); err != ErrContextReuse {
 		t.Fatalf("got %v, want %v", err, ErrContextReuse)
+	}
+}
+
+func TestValidateAuthenticatorWithoutSessionAllowsContextReplay(t *testing.T) {
+	cert := selfSignedCert(t)
+	srv, cli := tlsPair(t, cert)
+	defer srv.Close()
+	defer cli.Close()
+
+	ctx, _ := NewRandomContext(12)
+	req := &AuthenticatorRequest{
+		Type:    HandshakeTypeClientCertificateRequest,
+		Context: ctx,
+		Extensions: []Extension{
+			{Type: SignatureAlgorithmsExtensionType, Data: []byte{0x00, 0x02, 0x04, 0x03}},
+		},
+	}
+
+	srvState := srv.ConnectionState()
+	auth, err := CreateAuthenticator(&srvState, RoleServer, req, cert, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cliState := cli.ConnectionState()
+	roots := x509.NewCertPool()
+	leaf, _ := x509.ParseCertificate(cert.Certificate[0])
+	roots.AddCert(leaf)
+
+	if _, err := ValidateAuthenticator(&cliState, RoleServer, req, auth, &x509.VerifyOptions{Roots: roots}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateAuthenticator(&cliState, RoleServer, req, auth, &x509.VerifyOptions{Roots: roots}); err != nil {
+		t.Fatalf("expected replay to remain acceptable without session tracking, got %v", err)
 	}
 }
 
