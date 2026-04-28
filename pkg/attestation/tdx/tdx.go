@@ -158,6 +158,10 @@ func (v verifier) VerifyEAT(eatToken []byte, teeNonce []byte, vTpmNonce []byte) 
 }
 
 func (v verifier) VerifyWithCoRIM(report []byte, manifest *corim.UnsignedCorim) error {
+	if manifest == nil {
+		return fmt.Errorf("CoRIM manifest is nil")
+	}
+
 	// 1. Extract MRTD manually
 	if len(report) < 160 {
 		return fmt.Errorf("TDX report too small to extract MRTD")
@@ -184,21 +188,24 @@ func (v verifier) VerifyWithCoRIM(report []byte, manifest *corim.UnsignedCorim) 
 		// Match measurements in CoMID
 		if c.Triples.ReferenceValues != nil {
 			for _, rv := range *c.Triples.ReferenceValues {
-				if rv.Measurements.Valid() != nil {
-					continue
+				if err := rv.Measurements.Valid(); err != nil {
+					return fmt.Errorf("invalid CoRIM measurements for TDX: %w", err)
 				}
 				for _, m := range rv.Measurements {
 					if m.Val.Digests == nil {
 						continue
 					}
-					// Check digest match...
-					// Simplified placeholder matching logic compatible with previous steps
+					for _, digest := range *m.Val.Digests {
+						if bytes.Equal(digest.HashValue, mrtd) {
+							return nil
+						}
+					}
 				}
 			}
 		}
 	}
 
-	return nil
+	return fmt.Errorf("no matching reference value found in CoRIM for TDX")
 }
 
 func ReadTDXAttestationPolicy(policyPath string, policy *checkconfig.Config) error {

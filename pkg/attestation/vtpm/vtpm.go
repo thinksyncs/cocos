@@ -131,6 +131,10 @@ func NewVerifier(writer io.Writer) attestation.Verifier {
 }
 
 func (v *verifier) VerifyWithCoRIM(report []byte, manifest *corim.UnsignedCorim) error {
+	if manifest == nil {
+		return fmt.Errorf("CoRIM manifest is nil")
+	}
+
 	attestation := &attest.Attestation{}
 	if err := proto.Unmarshal(report, attestation); err != nil {
 		return fmt.Errorf("failed to unmarshal attestation report: %w", err)
@@ -164,15 +168,15 @@ func (v *verifier) VerifyWithCoRIM(report []byte, manifest *corim.UnsignedCorim)
 		// Match measurements in CoMID
 		if c.Triples.ReferenceValues != nil {
 			for _, rv := range *c.Triples.ReferenceValues {
-				if rv.Measurements.Valid() != nil {
-					continue
+				if err := rv.Measurements.Valid(); err != nil {
+					return fmt.Errorf("invalid CoRIM measurements for vTPM: %w", err)
 				}
 				for _, m := range rv.Measurements {
 					if m.Val.Digests == nil {
 						continue
 					}
 					for _, digest := range *m.Val.Digests {
-						if string(digest.HashValue) == string(measurement) {
+						if bytes.Equal(digest.HashValue, measurement) {
 							return nil // Match found
 						}
 					}
@@ -181,8 +185,7 @@ func (v *verifier) VerifyWithCoRIM(report []byte, manifest *corim.UnsignedCorim)
 		}
 	}
 
-	// returning nil to satisfy interface for now as we transition
-	return nil
+	return fmt.Errorf("no matching reference value found in CoRIM for vTPM")
 }
 
 func Attest(teeNonce []byte, vTPMNonce []byte, teeAttestaion bool, vmpl uint) ([]byte, error) {
