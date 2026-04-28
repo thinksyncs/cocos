@@ -62,7 +62,9 @@ func tlsPair(t *testing.T, cert tls.Certificate) (srv, cli *tls.Conn) {
 
 type acceptEvidenceVerifier struct{}
 
-func (acceptEvidenceVerifier) VerifyEvidence(evidence []byte) error { return nil }
+func (acceptEvidenceVerifier) VerifyEvidence(evidence []byte, _ attestation.EvidenceBinding) error {
+	return nil
+}
 
 const alternateExporterLabel = "Attestation Binding"
 
