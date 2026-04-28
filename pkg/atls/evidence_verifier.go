@@ -4,7 +4,7 @@
 package atls
 
 import (
-	"bytes"
+	"crypto/subtle"
 	"fmt"
 	"os"
 
@@ -38,7 +38,7 @@ func (v *policyEvidenceVerifier) VerifyEvidence(evidence []byte, expected eaatte
 	if err != nil {
 		return fmt.Errorf("atls: failed to decode EAT evidence: %w", err)
 	}
-	if !bytes.Equal(claims.Nonce, expected.Nonce[:]) {
+	if !constantTimeEqual(claims.Nonce, expected.Nonce[:]) {
 		return fmt.Errorf("atls: evidence nonce does not match TLS exporter binding")
 	}
 	platformType := platformTypeFromClaims(claims.PlatformType)
@@ -82,7 +82,7 @@ func verifyTDXReportData(report []byte, expectedReportData []byte) error {
 	if len(report) < tdxReportDataEnd {
 		return fmt.Errorf("atls: TDX report too small to extract report data")
 	}
-	if !bytes.Equal(report[tdxReportDataStart:tdxReportDataEnd], expectedReportData) {
+	if !constantTimeEqual(report[tdxReportDataStart:tdxReportDataEnd], expectedReportData) {
 		return fmt.Errorf("atls: TDX report data does not match TLS exporter binding")
 	}
 	return nil
@@ -125,7 +125,7 @@ func compareSNPReportData(snpReport *sevsnp.Attestation, expectedReportData []by
 	if snpReport == nil || snpReport.GetReport() == nil {
 		return fmt.Errorf("atls: SNP attestation is missing report data")
 	}
-	if !bytes.Equal(snpReport.GetReport().GetReportData(), expectedReportData) {
+	if !constantTimeEqual(snpReport.GetReport().GetReportData(), expectedReportData) {
 		return fmt.Errorf("atls: SNP report data does not match TLS exporter binding")
 	}
 	return nil
@@ -141,11 +141,15 @@ func verifyVTPMNonce(report []byte, expectedNonce []byte) error {
 		if err != nil {
 			continue
 		}
-		if bytes.Equal(attested.ExtraData, expectedNonce) {
+		if constantTimeEqual(attested.ExtraData, expectedNonce) {
 			return nil
 		}
 	}
 	return fmt.Errorf("atls: vTPM quote nonce does not match TLS exporter binding")
+}
+
+func constantTimeEqual(a, b []byte) bool {
+	return subtle.ConstantTimeCompare(a, b) == 1
 }
 
 func loadCoRIM(path string) (*corim.UnsignedCorim, error) {

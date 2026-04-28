@@ -78,11 +78,10 @@ func VerifyPayload(st *tls.ConnectionState, defaultLabel string, certificateRequ
 }
 
 func VerifyBinder(st *tls.ConnectionState, label string, certificateRequestContext []byte, leaf *x509.Certificate, binder AttestationBinder) error {
-	exportedValue, aikPubHash, binding, err := ComputeBinding(st, label, certificateRequestContext, leaf)
+	_, aikPubHash, binding, err := ComputeBinding(st, label, certificateRequestContext, leaf)
 	if err != nil {
 		return err
 	}
-	_ = exportedValue
 	return verifyBinderValues(aikPubHash, binding, binder)
 }
 

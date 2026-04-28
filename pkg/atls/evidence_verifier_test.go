@@ -4,9 +4,14 @@
 package atls
 
 import (
+	"crypto/sha3"
 	"testing"
 
 	"github.com/google/go-sev-guest/proto/sevsnp"
+	"github.com/google/go-tpm-tools/proto/attest"
+	tpmpb "github.com/google/go-tpm-tools/proto/tpm"
+	"github.com/google/go-tpm/legacy/tpm2"
+	"github.com/google/go-tpm/tpmutil"
 	eaattestation "github.com/ultravioletrs/cocos/pkg/atls/eaattestation"
 	cocosattestation "github.com/ultravioletrs/cocos/pkg/attestation"
 	"google.golang.org/protobuf/proto"
@@ -59,4 +64,98 @@ func TestVerifyEvidenceBindingRejectsSNPReportDataMismatch(t *testing.T) {
 	if err := verifyEvidenceBinding(cocosattestation.SNP, report, wrong); err == nil {
 		t.Fatal("expected mismatched SNP report data to fail")
 	}
+}
+
+func TestVerifyEvidenceBindingRejectsVTPMNonceMismatch(t *testing.T) {
+	expected := testEvidenceBinding()
+	report := testVTPMReport(t, expected.Nonce[:])
+
+	if err := verifyEvidenceBinding(cocosattestation.VTPM, report, expected); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	wrong := expected
+	wrong.Nonce[0] ^= 0xff
+	if err := verifyEvidenceBinding(cocosattestation.VTPM, report, wrong); err == nil {
+		t.Fatal("expected mismatched vTPM nonce to fail")
+	}
+}
+
+func TestVerifyEvidenceBindingRejectsSNPvTPMQuoteNonceMismatch(t *testing.T) {
+	expected := testEvidenceBinding()
+	report := testSNPvTPMReport(t, expected)
+
+	if err := verifyEvidenceBinding(cocosattestation.SNPvTPM, report, expected); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	wrong := expected
+	wrong.Nonce[0] ^= 0xff
+	if err := verifyEvidenceBinding(cocosattestation.SNPvTPM, report, wrong); err == nil {
+		t.Fatal("expected mismatched SNP-vTPM quote nonce to fail")
+	}
+}
+
+func TestVerifyEvidenceBindingRejectsSNPvTPMReportDataMismatch(t *testing.T) {
+	expected := testEvidenceBinding()
+	report := testSNPvTPMReport(t, expected)
+
+	wrong := expected
+	wrong.ReportData[0] ^= 0xff
+	if err := verifyEvidenceBinding(cocosattestation.SNPvTPM, report, wrong); err == nil {
+		t.Fatal("expected mismatched SNP-vTPM report data to fail")
+	}
+}
+
+func testVTPMReport(t *testing.T, nonce []byte) []byte {
+	t.Helper()
+	quote := testTPMQuote(t, nonce)
+	report, err := proto.Marshal(&attest.Attestation{
+		Quotes: []*tpmpb.Quote{{Quote: quote}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return report
+}
+
+func testSNPvTPMReport(t *testing.T, expected eaattestation.EvidenceBinding) []byte {
+	t.Helper()
+	akPub := []byte("test-ak-public-key")
+	teeReportData := sha3.Sum512(append(append([]byte(nil), expected.ReportData[:]...), akPub...))
+	quote := testTPMQuote(t, expected.Nonce[:])
+	report, err := proto.Marshal(&attest.Attestation{
+		AkPub:  akPub,
+		Quotes: []*tpmpb.Quote{{Quote: quote}},
+		TeeAttestation: &attest.Attestation_SevSnpAttestation{
+			SevSnpAttestation: &sevsnp.Attestation{
+				Report: &sevsnp.Report{
+					ReportData: teeReportData[:],
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return report
+}
+
+func testTPMQuote(t *testing.T, nonce []byte) []byte {
+	t.Helper()
+	quote, err := tpm2.AttestationData{
+		Magic:           0xff544347,
+		Type:            tpm2.TagAttestQuote,
+		QualifiedSigner: tpm2.Name{},
+		ExtraData:       tpmutil.U16Bytes(nonce),
+		ClockInfo:       tpm2.ClockInfo{},
+		AttestedQuoteInfo: &tpm2.QuoteInfo{
+			PCRSelection: tpm2.PCRSelection{Hash: tpm2.AlgSHA256},
+			PCRDigest:    tpmutil.U16Bytes{},
+		},
+	}.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return quote
 }
