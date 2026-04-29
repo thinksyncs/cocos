@@ -14,25 +14,60 @@ import (
 
 func TestCCPlatform(t *testing.T) {
 	tests := []struct {
-		name                  string
-		sevSnpGuestExists     bool
-		sevSnpGuestvTPMExists bool
-		tdxGuestExists        bool
-		isAzure               bool
-		expected              PlatformType
+		name     string
+		checks   []ccCheck
+		expected PlatformType
 	}{
 		{
-			name:                  "No CC platform detected",
-			sevSnpGuestExists:     false,
-			sevSnpGuestvTPMExists: false,
-			tdxGuestExists:        false,
-			isAzure:               false,
-			expected:              NoCC,
+			name: "No CC platform detected",
+			checks: []ccCheck{
+				{func() bool { return false }, SNPvTPM},
+				{func() bool { return false }, SNP},
+				{func() bool { return false }, TDX},
+				{func() bool { return false }, Azure},
+			},
+			expected: NoCC,
+		},
+		{
+			name: "Azure TDX with vTPM prefers TDX over generic Azure",
+			checks: []ccCheck{
+				{func() bool { return false }, SNPvTPM},
+				{func() bool { return false }, SNP},
+				{func() bool { return true }, TDX},
+				{func() bool { return true }, Azure},
+			},
+			expected: TDX,
+		},
+		{
+			name: "Azure is used when no platform-specific TEE device is detected",
+			checks: []ccCheck{
+				{func() bool { return false }, SNPvTPM},
+				{func() bool { return false }, SNP},
+				{func() bool { return false }, TDX},
+				{func() bool { return true }, Azure},
+			},
+			expected: Azure,
+		},
+		{
+			name: "SNP-vTPM keeps precedence over SNP",
+			checks: []ccCheck{
+				{func() bool { return true }, SNPvTPM},
+				{func() bool { return true }, SNP},
+				{func() bool { return false }, TDX},
+				{func() bool { return false }, Azure},
+			},
+			expected: SNPvTPM,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			originalChecks := ccPlatformChecks
+			defer func() { ccPlatformChecks = originalChecks }()
+			ccPlatformChecks = func() []ccCheck {
+				return tt.checks
+			}
+
 			result := CCPlatform()
 			assert.Equal(t, tt.expected, result)
 		})
