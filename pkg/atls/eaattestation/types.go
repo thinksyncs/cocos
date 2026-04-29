@@ -36,6 +36,13 @@ type AttestationBinder struct {
 	Binding       []byte `json:"binding,omitempty"`
 }
 
+type EvidenceBinding struct {
+	ReportData    [64]byte
+	Nonce         [32]byte
+	Binding       []byte
+	ExportedValue []byte
+}
+
 type VerifiedPayload struct {
 	Payload           *Payload
 	EvidenceVerified  bool

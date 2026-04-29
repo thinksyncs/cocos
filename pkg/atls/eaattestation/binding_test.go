@@ -8,6 +8,8 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -20,12 +22,25 @@ import (
 const alternateExporterLabel = "Attestation Binding"
 
 type stubEvidenceVerifier struct {
-	called bool
-	err    error
+	called       bool
+	err          error
+	gotBinding   EvidenceBinding
+	wantReport   [64]byte
+	wantNonce    [32]byte
+	checkBinding bool
 }
 
-func (s *stubEvidenceVerifier) VerifyEvidence(evidence []byte) error {
+func (s *stubEvidenceVerifier) VerifyEvidence(evidence []byte, binding EvidenceBinding) error {
 	s.called = true
+	s.gotBinding = binding
+	if s.checkBinding {
+		if !bytes.Equal(binding.ReportData[:], s.wantReport[:]) {
+			return ErrBindingMismatch
+		}
+		if !bytes.Equal(binding.Nonce[:], s.wantNonce[:]) {
+			return ErrBindingMismatch
+		}
+	}
 	return s.err
 }
 
@@ -144,12 +159,18 @@ func TestVerifyPayloadSuccess(t *testing.T) {
 
 	st := cli.ConnectionState()
 	ctx := []byte{1, 2, 3, 4}
-	_, aik, binding, err := ComputeBinding(&st, ExporterLabelAttestation, ctx, leaf)
+	exportedValue, aik, binding, err := ComputeBinding(&st, ExporterLabelAttestation, ctx, leaf)
 	if err != nil {
 		t.Fatal(err)
 	}
+	reportData := sha512.Sum512(binding)
+	nonce := sha256.Sum256(exportedValue)
 
-	ev := &stubEvidenceVerifier{}
+	ev := &stubEvidenceVerifier{
+		wantReport:   reportData,
+		wantNonce:    nonce,
+		checkBinding: true,
+	}
 	rv := &stubResultsVerifier{}
 	payload := &Payload{
 		Version:            1,
@@ -174,6 +195,9 @@ func TestVerifyPayloadSuccess(t *testing.T) {
 	}
 	if !ev.called || !rv.called {
 		t.Fatalf("expected both verifiers to be called")
+	}
+	if len(ev.gotBinding.Binding) == 0 || len(ev.gotBinding.ExportedValue) == 0 {
+		t.Fatalf("expected evidence verifier to receive binding inputs")
 	}
 }
 

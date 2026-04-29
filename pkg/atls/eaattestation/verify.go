@@ -4,13 +4,15 @@
 package attestation
 
 import (
+	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 )
 
 type EvidenceVerifier interface {
-	VerifyEvidence(evidence []byte) error
+	VerifyEvidence(evidence []byte, binding EvidenceBinding) error
 }
 
 type ResultsVerifier interface {
@@ -39,13 +41,25 @@ func VerifyPayload(st *tls.ConnectionState, defaultLabel string, certificateRequ
 		UsedExporterLabel: defaultLabel,
 	}
 
-	if err := VerifyBinder(st, verified.UsedExporterLabel, certificateRequestContext, leaf, payload.Binder); err != nil {
+	exportedValue, aikPubHash, binding, err := ComputeBinding(st, verified.UsedExporterLabel, certificateRequestContext, leaf)
+	if err != nil {
+		return nil, err
+	}
+	if err := verifyBinderValues(aikPubHash, binding, payload.Binder); err != nil {
 		return nil, err
 	}
 	verified.BindingVerified = true
 
+	reportData := sha512.Sum512(binding)
+	nonce := sha256.Sum256(exportedValue)
+	expectedBinding := EvidenceBinding{
+		ReportData:    reportData,
+		Nonce:         nonce,
+		Binding:       append([]byte(nil), binding...),
+		ExportedValue: append([]byte(nil), exportedValue...),
+	}
 	if len(payload.Evidence) > 0 && policy.EvidenceVerifier != nil {
-		if err := policy.EvidenceVerifier.VerifyEvidence(payload.Evidence); err != nil {
+		if err := policy.EvidenceVerifier.VerifyEvidence(payload.Evidence, expectedBinding); err != nil {
 			return nil, err
 		}
 		verified.EvidenceVerified = true
@@ -64,11 +78,14 @@ func VerifyPayload(st *tls.ConnectionState, defaultLabel string, certificateRequ
 }
 
 func VerifyBinder(st *tls.ConnectionState, label string, certificateRequestContext []byte, leaf *x509.Certificate, binder AttestationBinder) error {
-	exportedValue, aikPubHash, binding, err := ComputeBinding(st, label, certificateRequestContext, leaf)
+	_, aikPubHash, binding, err := ComputeBinding(st, label, certificateRequestContext, leaf)
 	if err != nil {
 		return err
 	}
-	_ = exportedValue
+	return verifyBinderValues(aikPubHash, binding, binder)
+}
+
+func verifyBinderValues(aikPubHash, binding []byte, binder AttestationBinder) error {
 	if !equalBytes(aikPubHash, binder.AIKPubHash) {
 		return ErrAIKPubHashMismatch
 	}
