@@ -37,6 +37,15 @@ type ccCheck struct {
 	platform  PlatformType
 }
 
+var ccPlatformChecks = func() []ccCheck {
+	return []ccCheck{
+		{SevSnpGuestvTPMExists, SNPvTPM},
+		{SevSnpGuestDeviceExists, SNP},
+		{TDXGuestDeviceExists, TDX},
+		{isAzureVM, Azure},
+	}
+}
+
 type Provider interface {
 	Attestation(teeNonce []byte, vTpmNonce []byte) ([]byte, error)
 	TeeAttestation(teeNonce []byte) ([]byte, error)
@@ -50,14 +59,7 @@ type Verifier interface {
 
 // CCPlatform returns the type of the confidential computing platform.
 func CCPlatform() PlatformType {
-	checks := []ccCheck{
-		{SevSnpGuestvTPMExists, SNPvTPM},
-		{SevSnpGuestDeviceExists, SNP},
-		{isAzureVM, Azure},
-		{TDXGuestDeviceExists, TDX},
-	}
-
-	for _, c := range checks {
+	for _, c := range ccPlatformChecks() {
 		if c.checkFunc() {
 			return c.platform
 		}
