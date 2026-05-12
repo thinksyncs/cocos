@@ -202,6 +202,22 @@ Concrete policy rules should follow this shape:
   policy decision.
 - A mismatch is a hard failure for flows that require that layer.
 
+## Error handling
+
+Validation failures should preserve the layer, field, and error class. Callers
+can then distinguish local policy configuration errors from missing peer claims
+or mismatched values.
+
+For example:
+
+- missing local expected value: configuration or policy setup problem
+- missing observed value: peer evidence, metadata, or token did not carry the
+  required claim
+- mismatch: peer supplied a claim, but it did not match local policy
+
+Aggregated validation errors should remain inspectable by layer and field so
+callers can fail closed while still reporting actionable diagnostics.
+
 ## Minimal implementation path
 
 A small implementation can be staged without changing the aTLS wire protocol:
