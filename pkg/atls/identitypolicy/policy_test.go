@@ -56,6 +56,60 @@ func TestValidateAcceptsMatchingRequiredLayers(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsSingleExpectedValuePerRequiredLayer(t *testing.T) {
+	policy := Policy{
+		Require: Requirements{
+			L2B: true,
+			L3:  true,
+			L4:  true,
+			L5:  true,
+		},
+		Expected: Values{
+			Service: "payments",
+			Agent:   "agent-a",
+			TaskID:  "task-1",
+			Scopes:  []string{"read:orders"},
+		},
+	}
+
+	observed := Values{
+		Service:     "payments",
+		Tenant:      "different-tenant",
+		Deployment:  "different-deployment",
+		Environment: "different-environment",
+		Workload:    "different-workload",
+		Agent:       "agent-a",
+		TaskID:      "task-1",
+		ThreadID:    "different-thread",
+		Scopes:      []string{"read:orders", "write:audit"},
+	}
+
+	if err := Validate(policy, observed); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateAcceptsObservedSetSupersetWithDuplicatesAndBlanks(t *testing.T) {
+	policy := Policy{
+		Require: Requirements{L5: true},
+		Expected: Values{
+			Scopes:               []string{"read:orders", "read:orders"},
+			Resources:            []string{"orders"},
+			AuthorizationDetails: []string{"settle"},
+		},
+	}
+
+	observed := Values{
+		Scopes:               []string{" ", "read:orders", "read:orders", "write:audit"},
+		Resources:            []string{"orders", "audit-log"},
+		AuthorizationDetails: []string{"settle", "notify"},
+	}
+
+	if err := Validate(policy, observed); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
 func TestValidateRejectsMissingExpectedValue(t *testing.T) {
 	policy := Policy{
 		Require: Requirements{L2B: true},
@@ -108,6 +162,45 @@ func TestValidateRejectsMissingScope(t *testing.T) {
 	err := Validate(policy, Values{Scopes: []string{"read:orders"}})
 	if !errors.Is(err, ErrMismatch) {
 		t.Fatalf("Validate() error = %v, want %v", err, ErrMismatch)
+	}
+}
+
+func TestValidateReportsAllL5Failures(t *testing.T) {
+	policy := Policy{
+		Require: Requirements{L5: true},
+		Expected: Values{
+			Scopes:               []string{"read:orders"},
+			Resources:            []string{"orders"},
+			AuthorizationDetails: []string{"settle"},
+		},
+	}
+
+	err := Validate(policy, Values{
+		Scopes:    []string{" "},
+		Resources: []string{"audit-log"},
+	})
+	if !errors.Is(err, ErrMissingObserved) {
+		t.Fatalf("Validate() error = %v, want %v", err, ErrMissingObserved)
+	}
+	if !errors.Is(err, ErrMismatch) {
+		t.Fatalf("Validate() error = %v, want %v", err, ErrMismatch)
+	}
+
+	var validationErrs ValidationErrors
+	if !errors.As(err, &validationErrs) {
+		t.Fatalf("Validate() error = %T, want ValidationErrors", err)
+	}
+	if len(validationErrs) != 3 {
+		t.Fatalf("Validate() error count = %d, want 3", len(validationErrs))
+	}
+	if !validationErrs.Has(LayerL5, FieldScopes, ErrMissingObserved) {
+		t.Fatalf("Validate() errors do not include L5 scopes missing observed value")
+	}
+	if !validationErrs.Has(LayerL5, FieldResources, ErrMismatch) {
+		t.Fatalf("Validate() errors do not include L5 resources mismatch")
+	}
+	if !validationErrs.Has(LayerL5, FieldAuthorizationDetails, ErrMissingObserved) {
+		t.Fatalf("Validate() errors do not include L5 authorization details missing observed value")
 	}
 }
 
@@ -238,6 +331,21 @@ func TestValidationErrorsHelpersSkipNilEntries(t *testing.T) {
 	}
 	if got := len(errs.ByField(FieldTaskID)); got != 1 {
 		t.Fatalf("ValidationErrors.ByField() length = %d, want 1", got)
+	}
+}
+
+func TestAppendValidationErrorsWrapsUnexpectedError(t *testing.T) {
+	unexpected := errors.New("unexpected")
+
+	errs := appendValidationErrors(nil, unexpected)
+	if len(errs) != 1 {
+		t.Fatalf("appendValidationErrors() length = %d, want 1", len(errs))
+	}
+	if !errs.Has(FieldAll, FieldAll, unexpected) {
+		t.Fatalf("appendValidationErrors() did not preserve unexpected error")
+	}
+	if !errors.Is(errs, unexpected) {
+		t.Fatalf("appendValidationErrors() aggregate does not unwrap unexpected error")
 	}
 }
 
