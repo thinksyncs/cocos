@@ -89,7 +89,6 @@ func (a provider) TeeAttestation(teeNonce []byte) ([]byte, error) {
 }
 
 func (a provider) VTpmAttestation(vTpmNonce []byte) ([]byte, error) {
-	fmt.Printf("DEBUG: VTpmAttestation: vtpm.ExternalTPM is %T at %p\n", vtpm.ExternalTPM, &vtpm.ExternalTPM)
 	quote, err := vtpm.FetchQuote(vTpmNonce)
 	if err != nil {
 		return []byte{}, errors.Wrap(vtpm.ErrFetchQuote, err)
@@ -127,26 +126,6 @@ func NewVerifier(writer io.Writer) attestation.Verifier {
 	return verifier{
 		writer: writer,
 	}
-}
-
-// VerifyEAT verifies an EAT token and extracts the binary report for verification.
-func (v verifier) VerifyEAT(eatToken []byte, teeNonce []byte, vTpmNonce []byte) error {
-	// EAT verification logic is handled by certificate_verifier calling VerifyWithCoRIM
-	// But legacy interface might require VerifyEAT.
-	// In certificate_verifier.go, platformVerifier returns attestation.Verifier.
-	// certificate_verifier calls v.VerifyWithCoRIM directly (type assertion?).
-	// No, attestation.Verifier interface must have VerifyWithCoRIM.
-	// I previously updated Verifier interface to have VerifyWithCoRIM and VerifyEAT.
-	// But VerifyEAT implementation here calls VerifyAttestation which calls legacy.
-	// I should probably remove VerifyEAT from here if interface doesn't REQUIRE it or if I can stub it.
-	// But certificate_verifier calls v.VerifyWithCoRIM.
-	// Does it call VerifyEAT?
-	// certificate_verifier call: `func (v *certificateVerifier) verifyCertificateExtension` calls `eat.DecodeCBOR` then `verifier.VerifyWithCoRIM`.
-	// So VerifyEAT is NOT called by certificate_verifier.
-	// Is VerifyEAT in interface?
-	// If yes, I must keep it or stub it.
-	// I'll stub it to return error "not implemented used VerifyWithCoRIM".
-	return fmt.Errorf("VerifyEAT is deprecated, use VerifyWithCoRIM")
 }
 
 func (v verifier) VerifyWithCoRIM(report []byte, manifest *corim.UnsignedCorim) error {
